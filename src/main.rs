@@ -25,6 +25,7 @@ fn main() {
     if pattern_matching::match_pattern(&input_line, &pattern) {
         process::exit(0)
     } else {
+        println!("Error Occurred");
         process::exit(1)
     }
 }
