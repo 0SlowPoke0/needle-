@@ -20,9 +20,12 @@ fn main() {
     let mut input_line = String::new();
 
     io::stdin().read_line(&mut input_line).unwrap();
+    input_line = input_line.trim_end().to_string(); // remove trailing newline(s)
+    println!("{:?}", pattern);
+    println!("{:?}", input_line);
 
     // Uncomment this block to pass the first stage
-    if pattern_matching::match_pattern(&input_line, &pattern) {
+    if pattern_matching::match_here(&pattern, &input_line) {
         process::exit(0)
     } else {
         println!("Error Occurred");

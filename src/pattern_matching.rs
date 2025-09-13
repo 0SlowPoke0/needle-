@@ -1,39 +1,65 @@
-use std::collections::HashSet;
-
-pub fn match_pattern(input_line: &str, pattern: &str) -> bool {
-    match pattern {
-        p if p.starts_with(r"\d") => input_line.chars().any(|c| c.is_ascii_digit()),
-        p if p.starts_with(r"\w") => input_line.chars().any(|c| c.is_alphanumeric() || c == '_'),
-        p if p.starts_with("[^") => check_character_groups(input_line, pattern, false),
-        p if p.starts_with("[") => check_character_groups(input_line, pattern, true),
-        p if p.chars().count() == 1 => input_line.contains(pattern),
-        _ => panic!("Unhandled pattern: {}", pattern),
+fn next_token(pattern: &str) -> Option<(&str, &str)> {
+    if pattern.is_empty() {
+        return None;
+    }
+    if pattern.starts_with('\\') && pattern.len() >= 2 {
+        // escape like \d, \w
+        Some((&pattern[..2], &pattern[2..]))
+    } else if pattern.starts_with("[^") {
+        // negated class
+        if let Some(end) = pattern.find(']') {
+            Some((&pattern[..end + 1], &pattern[end + 1..]))
+        } else {
+            None
+        }
+    } else if pattern.starts_with('[') {
+        // positive class
+        if let Some(end) = pattern.find(']') {
+            Some((&pattern[..end + 1], &pattern[end + 1..]))
+        } else {
+            None
+        }
+    } else {
+        // single char
+        let mut chars = pattern.chars();
+        let first = chars.next().unwrap();
+        Some((&pattern[..first.len_utf8()], chars.as_str()))
     }
 }
 
-fn check_character_groups(input_line: &str, pattern: &str, positive: bool) -> bool {
-    let prefix = if positive { "[" } else { "[^" };
-    let Some(target) = pattern
-        .strip_prefix(prefix)
-        .map(|c| c.strip_suffix(']'))
-        .flatten()
-    else {
-        return false;
-    };
-
-    let check_word_contains_target = |c: &str, positive: bool| -> bool {
-        let target_chars = target.chars().collect::<HashSet<_>>();
-
-        if positive {
-            c.chars()
-                .any(|word_element| target_chars.contains(&word_element))
-        } else {
-            c.chars()
-                .any(|word_element| !target_chars.contains(&word_element))
+fn token_matches(token: &str, ch: char) -> bool {
+    match token {
+        r"\d" => ch.is_ascii_digit(),
+        r"\w" => ch.is_alphanumeric() || ch == '_',
+        "." => true,
+        t if t.starts_with("[^") => {
+            let inside = &t[2..t.len() - 1]; // strip [^ and ]
+            !inside.chars().any(|c| c == ch)
         }
-    };
+        t if t.starts_with("[") => {
+            let inside = &t[1..t.len() - 1]; // strip [ and ]
+            inside.chars().any(|c| c == ch)
+        }
+        lit if lit.chars().count() == 1 => lit.chars().next().unwrap() == ch,
+        _ => panic!("Unhandled token: {}", token),
+    }
+}
 
-    input_line
-        .split_whitespace()
-        .any(|c| check_word_contains_target(c, positive))
+pub fn match_here(pattern: &str, text: &str) -> bool {
+    if pattern.is_empty() {
+        return text.is_empty();
+    }
+    if text.is_empty() {
+        return false;
+    }
+
+    let (token, rest_pattern) = next_token(pattern).unwrap();
+    let first_char = text.chars().next().unwrap();
+    let rest_text = &text[first_char.len_utf8()..];
+
+    if token_matches(token, first_char) {
+        match_here(rest_pattern, rest_text)
+    } else {
+        false
+    }
 }
