@@ -6,16 +6,60 @@ pub enum Token {
     Literal(char),
     CharClass(Vec<char>),
     NegClass(Vec<char>),
+    StartAnchor,
+    EndAnchor,
 }
 
-pub fn token_matches(token: &Token, ch: char) -> bool {
+pub fn token_matches<'a>(token: &Token, text: &'a str) -> Option<&'a str> {
     match token {
-        Token::Digit => ch.is_ascii_digit(),
-        Token::Word => ch.is_alphanumeric() || ch == '_',
-        Token::Any => true,
-        Token::Literal(c) => *c == ch,
-        Token::CharClass(set) => set.contains(&ch),
-        Token::NegClass(set) => !set.contains(&ch),
+        Token::Digit => {
+            let mut chars = text.chars();
+            match chars.next() {
+                Some(c) if c.is_ascii_digit() => Some(chars.as_str()),
+                _ => None,
+            }
+        }
+        Token::Word => {
+            let mut chars = text.chars();
+            match chars.next() {
+                Some(c) if c.is_alphanumeric() || c == '_' => Some(chars.as_str()),
+                _ => None,
+            }
+        }
+        Token::Any => {
+            let mut chars = text.chars();
+            chars.next()?; // consume one char if present
+            Some(chars.as_str())
+        }
+        Token::Literal(lit) => {
+            if text.starts_with(*lit) {
+                Some(&text[1..])
+            } else {
+                None
+            }
+        }
+        Token::CharClass(set) => {
+            let mut chars = text.chars();
+            match chars.next() {
+                Some(c) if set.contains(&c) => Some(chars.as_str()),
+                _ => None,
+            }
+        }
+        Token::NegClass(set) => {
+            let mut chars = text.chars();
+            match chars.next() {
+                Some(c) if !set.contains(&c) => Some(chars.as_str()),
+                _ => None,
+            }
+        }
+        Token::EndAnchor => {
+            if text.is_empty() {
+                Some(text)
+            } else {
+                None
+            }
+        }
+        Token::StartAnchor => Some(&text[1..]),
     }
 }
 
@@ -30,6 +74,14 @@ pub fn next_token(pattern: &str) -> Option<(Token, &str)> {
     }
     if pattern.starts_with("\\w") {
         return Some((Token::Word, &pattern[2..]));
+    }
+
+    if pattern.starts_with('$') {
+        return Some((Token::EndAnchor, ""));
+    }
+
+    if pattern.starts_with('^') {
+        return Some((Token::StartAnchor, &pattern[1..]));
     }
 
     // wildcard

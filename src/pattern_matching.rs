@@ -1,20 +1,16 @@
 use crate::pattern_type::{next_token, token_matches};
 
-pub fn match_here(pattern: &str, text: &str) -> bool {
+fn match_here(pattern: &str, text: &str) -> bool {
     if pattern.is_empty() {
         return true;
     }
 
-    if text.is_empty() {
-        return false;
-    }
-
-    let (token, rest_pattern) = next_token(pattern).unwrap();
-    let first_char = text.chars().next().unwrap();
-    let rest_text = &text[first_char.len_utf8()..];
-
-    if token_matches(&token, first_char) {
-        match_here(rest_pattern, rest_text)
+    if let Some((token, rest_pattern)) = next_token(pattern) {
+        if let Some(rest_text) = token_matches(&token, text) {
+            match_here(rest_pattern, rest_text)
+        } else {
+            false
+        }
     } else {
         false
     }
