@@ -2,6 +2,7 @@ use std::env;
 use std::io;
 use std::process;
 mod pattern_matching;
+mod pattern_type;
 
 // Usage: echo <input_text> | your_program.sh -E <pattern>
 fn main() {
@@ -21,11 +22,9 @@ fn main() {
 
     io::stdin().read_line(&mut input_line).unwrap();
     input_line = input_line.trim_end().to_string(); // remove trailing newline(s)
-    println!("{:?}", pattern);
-    println!("{:?}", input_line);
 
     // Uncomment this block to pass the first stage
-    if pattern_matching::match_here(&pattern, &input_line) {
+    if pattern_matching::match_pattern(&pattern, &input_line) {
         process::exit(0)
     } else {
         println!("Error Occurred");
