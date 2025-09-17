@@ -1,112 +1,65 @@
+pub enum Quantifier {
+    One,       // exactly once (default)
+    OneOrMore, // +
+}
+
+pub struct Token {
+    pub kind: PatternType, // what it matches (char, digit, etc.)
+    pub quant: Quantifier, // how many times
+}
+
 #[derive(Debug)]
-pub enum Token {
+pub enum PatternType {
     Digit,
     Word,
-    Any,
     Literal(char),
-    CharClass(Vec<char>),
-    NegClass(Vec<char>),
+    CharClass(String),
+    NegClass(String),
     StartAnchor,
     EndAnchor,
 }
 
-pub fn token_matches<'a>(token: &Token, text: &'a str) -> Option<&'a str> {
-    match token {
-        Token::Digit => {
-            let mut chars = text.chars();
-            match chars.next() {
-                Some(c) if c.is_ascii_digit() => Some(chars.as_str()),
-                _ => None,
-            }
-        }
-        Token::Word => {
-            let mut chars = text.chars();
-            match chars.next() {
-                Some(c) if c.is_alphanumeric() || c == '_' => Some(chars.as_str()),
-                _ => None,
-            }
-        }
-        Token::Any => {
-            let mut chars = text.chars();
-            chars.next()?; // consume one char if present
-            Some(chars.as_str())
-        }
-        Token::Literal(lit) => {
-            if text.starts_with(*lit) {
-                Some(&text[1..])
-            } else {
-                None
-            }
-        }
-        Token::CharClass(set) => {
-            let mut chars = text.chars();
-            match chars.next() {
-                Some(c) if set.contains(&c) => Some(chars.as_str()),
-                _ => None,
-            }
-        }
-        Token::NegClass(set) => {
-            let mut chars = text.chars();
-            match chars.next() {
-                Some(c) if !set.contains(&c) => Some(chars.as_str()),
-                _ => None,
-            }
-        }
-        Token::EndAnchor => {
-            if text.is_empty() {
-                Some(text)
-            } else {
-                None
-            }
-        }
-        Token::StartAnchor => Some(&text[1..]),
-    }
-}
-
-pub fn next_token(pattern: &str) -> Option<(Token, &str)> {
+/// Parse the next token from a pattern string, returning:
+///   - a `PatternType` describing the token
+///   - the remainder of the pattern after that token.
+///
+/// Returns `None` if the pattern is empty.
+pub fn get_next_token(pattern: &str) -> Option<(Token, &str)> {
     if pattern.is_empty() {
         return None;
     }
 
-    // escape sequences
-    if pattern.starts_with("\\d") {
-        return Some((Token::Digit, &pattern[2..]));
-    }
-    if pattern.starts_with("\\w") {
-        return Some((Token::Word, &pattern[2..]));
-    }
-
-    if pattern.starts_with('$') {
-        return Some((Token::EndAnchor, ""));
-    }
-
-    if pattern.starts_with('^') {
-        return Some((Token::StartAnchor, &pattern[1..]));
-    }
-
-    // wildcard
-    if pattern.starts_with('.') {
-        return Some((Token::Any, &pattern[1..]));
-    }
-
-    // character classes
-    if pattern.starts_with("[^") {
-        if let Some(end) = pattern.find(']') {
-            let inside = &pattern[2..end]; // content between [^ and ]
-            let chars = inside.chars().collect::<Vec<_>>();
-            return Some((Token::NegClass(chars), &pattern[end + 1..]));
-        }
+    // ---------- 1) Detect the base kind ----------
+    let (kind, rest_after_kind) = if pattern.starts_with(r"\d") {
+        (PatternType::Digit, &pattern[2..])
+    } else if pattern.starts_with(r"\w") {
+        (PatternType::Word, &pattern[2..])
+    } else if pattern.starts_with('^') {
+        (PatternType::StartAnchor, &pattern[1..])
+    } else if pattern.starts_with('$') {
+        // `$` is a full token; no remainder inside
+        (PatternType::EndAnchor, &pattern[1..])
+    } else if pattern.starts_with("[^") {
+        let end = pattern.find(']')?;
+        let chars: String = pattern[2..end].into();
+        (PatternType::NegClass(chars), &pattern[end + 1..])
     } else if pattern.starts_with('[') {
-        if let Some(end) = pattern.find(']') {
-            let inside = &pattern[1..end]; // content between [ and ]
-            let chars = inside.chars().collect::<Vec<_>>();
-            return Some((Token::CharClass(chars), &pattern[end + 1..]));
-        }
-    }
+        let end = pattern.find(']')?;
+        let chars: String = pattern[1..end].into();
+        (PatternType::CharClass(chars), &pattern[end + 1..])
+    } else {
+        let ch = pattern.chars().next()?;
+        let rest = &pattern[ch.len_utf8()..];
+        (PatternType::Literal(ch), rest)
+    };
 
-    // single literal character
-    let mut chars = pattern.chars();
-    let first = chars.next().unwrap();
-    let rest = chars.as_str();
-    Some((Token::Literal(first), rest))
+    // ---------- 2) Check for quantifier ----------
+    let (quant, rest) = match rest_after_kind.chars().next() {
+        Some('+') => (Quantifier::OneOrMore, &rest_after_kind[1..]),
+        // Some('*') => (Quantifier::ZeroOrMore, &rest_after_kind[1..]),
+        // Some('?') => (Quantifier::ZeroOrOne, &rest_after_kind[1..]),
+        _ => (Quantifier::One, rest_after_kind),
+    };
+
+    Some((Token { kind, quant }, rest))
 }
