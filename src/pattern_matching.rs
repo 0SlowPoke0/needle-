@@ -13,8 +13,8 @@ pub fn match_pattern(pattern: &str, input_line: &str) -> bool {
         println!("token {:?}", token);
         println!("rest_pattern {:?}", rest_pattern);
 
-        if matches!(token.kind, PatternType::EndAnchor) && input_line.is_empty() {
-            return true;
+        if matches!(token.kind, PatternType::EndAnchor) {
+            return input_line.is_empty();
         }
         if let Some(rest_text) = match_token_with_text(&token, input_line, rest_pattern) {
             println!("rest_text {:?}", rest_text);
