@@ -1,8 +1,10 @@
+#[derive(Debug, PartialEq)]
 pub enum Quantifier {
     One,       // exactly once (default)
     OneOrMore, // +
 }
 
+#[derive(Debug)]
 pub struct Token {
     pub kind: PatternType, // what it matches (char, digit, etc.)
     pub quant: Quantifier, // how many times
