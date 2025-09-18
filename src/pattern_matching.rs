@@ -1,84 +1,107 @@
 use crate::pattern_type::{get_next_token, PatternType, Quantifier, Token};
 
-pub fn match_pattern(pattern: &str, input_line: &str) -> bool {
-    if pattern.is_empty() && !input_line.is_empty() {
+/// Try to match `pattern` at the current position of `input` ONLY.
+/// This function does NOT try to slide the pattern across the input.
+/// It returns `true` if the full `pattern` matches the start of `input`.
+pub fn match_pattern_here(pattern: &str, input: &str) -> bool {
+    // Base case: pattern consumed → success regardless of remaining input
+    if pattern.is_empty() {
         return true;
     }
 
-    if pattern.is_empty() && input_line.is_empty() {
-        return true;
-    }
-
+    // Parse next token
     if let Some((token, rest_pattern)) = get_next_token(pattern) {
-        println!("token {:?}", token);
-        println!("rest_pattern {:?}", rest_pattern);
-
+        // Anchors that assert positions:
+        if matches!(token.kind, PatternType::StartAnchor) {
+            // '^' consumes nothing; just continue matching the rest at this position.
+            return match_pattern_here(rest_pattern, input);
+        }
         if matches!(token.kind, PatternType::EndAnchor) {
-            return input_line.is_empty();
+            // '$' should only match if we're at the end of input
+            return input.is_empty();
         }
-        if let Some(rest_text) = match_token_with_text(&token, input_line, rest_pattern) {
-            println!("rest_text {:?}", rest_text);
-            match_pattern(rest_pattern, rest_text)
-        } else {
-            let Some(first_char) = input_line.chars().next() else {
-                return pattern.is_empty();
-            };
 
-            match_pattern(pattern, &input_line[first_char.len_utf8()..])
-        }
-    } else {
-        false
-    }
-}
-
-/// Try to match `token` against the start of `input`.
-/// Returns `Some(remaining_input)` if it matches, or `None` if it doesn’t.
-pub fn match_token_with_text<'a>(
-    token: &Token,
-    input: &'a str,
-    rest_pattern: &str,
-) -> Option<&'a str> {
-    // --- Handle anchors first (they don’t consume text) ---
-    match token.kind {
-        PatternType::StartAnchor => return Some(input), // `^`
-        PatternType::EndAnchor => return if input.is_empty() { Some(input) } else { None },
-        _ => {}
-    }
-
-    let mut rest = input;
-
-    // ---- First character must match (both One and OneOrMore) ----
-    let first = rest.chars().next()?;
-    if !char_matches(&token.kind, first) {
-        return None;
-    }
-    rest = &rest[first.len_utf8()..];
-
-    // Collect all possible “suffixes” after matching one or more chars
-    let mut suffixes = Vec::new();
-    suffixes.push(rest);
-
-    if token.quant == Quantifier::OneOrMore {
-        // Greedily consume as many as possible while saving suffix positions
-        let mut tmp = rest;
-        while let Some(c) = tmp.chars().next() {
-            if char_matches(&token.kind, c) {
-                tmp = &tmp[c.len_utf8()..];
-                suffixes.push(tmp);
-            } else {
-                break;
+        // Try to match this token at the current input position
+        match token.quant {
+            Quantifier::One => {
+                // Simple case: match exactly one character
+                if let Some(ch) = input.chars().next() {
+                    if char_matches(&token.kind, ch) {
+                        let remaining = &input[ch.len_utf8()..];
+                        return match_pattern_here(rest_pattern, remaining);
+                    }
+                }
+                return false;
+            }
+            Quantifier::OneOrMore => {
+                // Complex case: match one or more with backtracking
+                return match_one_or_more(&token.kind, input, rest_pattern);
             }
         }
     }
 
-    // Try all suffixes from longest to shortest
-    for candidate in suffixes.into_iter().rev() {
-        if match_pattern(rest_pattern, candidate) {
-            return Some(candidate);
+    // No more tokens — success (pattern fully consumed)
+    true
+}
+
+/// Handle OneOrMore quantifier with proper backtracking
+fn match_one_or_more(kind: &PatternType, input: &str, rest_pattern: &str) -> bool {
+    // Must match at least one character
+    let first = match input.chars().next() {
+        Some(ch) if char_matches(kind, ch) => ch,
+        _ => return false,
+    };
+
+    // Collect all possible positions after matching 1, 2, 3... characters
+    let mut positions = Vec::new();
+    let mut current_pos = input;
+
+    // Keep consuming matching characters and save each position
+    loop {
+        let ch = match current_pos.chars().next() {
+            Some(ch) if char_matches(kind, ch) => ch,
+            _ => break,
+        };
+        current_pos = &current_pos[ch.len_utf8()..];
+        positions.push(current_pos);
+
+        // If we've consumed all input, stop
+        if current_pos.is_empty() {
+            break;
         }
     }
 
-    None
+    // Try positions from longest match to shortest (greedy with backtracking)
+    for &pos in positions.iter().rev() {
+        if match_pattern_here(rest_pattern, pos) {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// Top-level search function: if pattern begins with `^`, match only at start,
+/// otherwise search (slide) pattern across entire input until a match is found.
+pub fn match_pattern(pattern: &str, input: &str) -> bool {
+    if pattern.starts_with('^') {
+        // Remove leading '^' and require a match at the start
+        return match_pattern_here(&pattern[1..], input);
+    }
+
+    // Otherwise, try every possible starting position
+    let mut cur = input;
+    loop {
+        if match_pattern_here(pattern, cur) {
+            return true;
+        }
+        // advance by exactly one Unicode scalar (UTF-8 safe)
+        if let Some(ch) = cur.chars().next() {
+            cur = &cur[ch.len_utf8()..];
+        } else {
+            return false; // no more positions to try
+        }
+    }
 }
 
 fn char_matches(kind: &PatternType, ch: char) -> bool {
