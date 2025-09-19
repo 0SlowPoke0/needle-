@@ -1,4 +1,4 @@
-use crate::pattern_type::{get_next_token, PatternType, Quantifier, Token};
+use crate::pattern_type::{get_next_token, PatternType, Quantifier};
 
 /// Try to match `pattern` at the current position of `input` ONLY.
 /// This function does NOT try to slide the pattern across the input.
@@ -37,6 +37,15 @@ pub fn match_pattern_here(pattern: &str, input: &str) -> bool {
                 // Complex case: match one or more with backtracking
                 return match_one_or_more(&token.kind, input, rest_pattern);
             }
+            Quantifier::ZeroOrOne => {
+                if let Some(ch) = input.chars().next() {
+                    if char_matches(&token.kind, ch) {
+                        let remaining = &input[ch.len_utf8()..];
+                        return match_pattern_here(rest_pattern, remaining);
+                    }
+                }
+                return true;
+            }
         }
     }
 
@@ -46,12 +55,6 @@ pub fn match_pattern_here(pattern: &str, input: &str) -> bool {
 
 /// Handle OneOrMore quantifier with proper backtracking
 fn match_one_or_more(kind: &PatternType, input: &str, rest_pattern: &str) -> bool {
-    // Must match at least one character
-    let first = match input.chars().next() {
-        Some(ch) if char_matches(kind, ch) => ch,
-        _ => return false,
-    };
-
     // Collect all possible positions after matching 1, 2, 3... characters
     let mut positions = Vec::new();
     let mut current_pos = input;

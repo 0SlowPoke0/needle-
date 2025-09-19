@@ -2,6 +2,7 @@
 pub enum Quantifier {
     One,       // exactly once (default)
     OneOrMore, // +
+    ZeroOrOne, // ?
 }
 
 #[derive(Debug)]
@@ -59,7 +60,7 @@ pub fn get_next_token(pattern: &str) -> Option<(Token, &str)> {
     let (quant, rest) = match rest_after_kind.chars().next() {
         Some('+') => (Quantifier::OneOrMore, &rest_after_kind[1..]),
         // Some('*') => (Quantifier::ZeroOrMore, &rest_after_kind[1..]),
-        // Some('?') => (Quantifier::ZeroOrOne, &rest_after_kind[1..]),
+        Some('?') => (Quantifier::ZeroOrOne, &rest_after_kind[1..]),
         _ => (Quantifier::One, rest_after_kind),
     };
 
