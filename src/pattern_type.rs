@@ -13,18 +13,19 @@ pub struct Token {
 
 #[derive(Debug)]
 pub enum PatternType {
+    Any,
     Digit,
     Word,
-    Any,
     Literal(char),
     CharClass(String),
     NegClass(String),
     StartAnchor,
     EndAnchor,
+    Group(Vec<String>), // New: represents (pattern1|pattern2|...)
 }
 
 /// Parse the next token from a pattern string, returning:
-///   - a `PatternType` describing the token
+///   - a `Token` describing the token
 ///   - the remainder of the pattern after that token.
 ///
 /// Returns `None` if the pattern is empty.
@@ -41,8 +42,13 @@ pub fn get_next_token(pattern: &str) -> Option<(Token, &str)> {
     } else if pattern.starts_with('^') {
         (PatternType::StartAnchor, &pattern[1..])
     } else if pattern.starts_with('$') {
-        // `$` is a full token; no remainder inside
         (PatternType::EndAnchor, &pattern[1..])
+    } else if pattern.starts_with('(') {
+        // Parse group with alternation
+        let group_content = parse_group(&pattern[1..])?;
+        let alternatives = group_content.0;
+        let rest = group_content.1;
+        (PatternType::Group(alternatives), rest)
     } else if pattern.starts_with("[^") {
         let end = pattern.find(']')?;
         let chars: String = pattern[2..end].into();
@@ -62,10 +68,43 @@ pub fn get_next_token(pattern: &str) -> Option<(Token, &str)> {
     // ---------- 2) Check for quantifier ----------
     let (quant, rest) = match rest_after_kind.chars().next() {
         Some('+') => (Quantifier::OneOrMore, &rest_after_kind[1..]),
-        // Some('*') => (Quantifier::ZeroOrMore, &rest_after_kind[1..]),
         Some('?') => (Quantifier::ZeroOrOne, &rest_after_kind[1..]),
         _ => (Quantifier::One, rest_after_kind),
     };
 
     Some((Token { kind, quant }, rest))
+}
+
+/// Parse a group like "(cat|dog|bird)" and return the alternatives and remaining pattern
+fn parse_group(pattern: &str) -> Option<(Vec<String>, &str)> {
+    // Find the matching closing parenthesis
+    let mut paren_count = 1;
+    let mut pos = 0;
+
+    for (i, ch) in pattern.char_indices() {
+        match ch {
+            '(' => paren_count += 1,
+            ')' => {
+                paren_count -= 1;
+                if paren_count == 0 {
+                    pos = i;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if paren_count != 0 {
+        return None; // Unmatched parentheses
+    }
+
+    // Extract content between parentheses
+    let group_content = &pattern[..pos];
+    let rest = &pattern[pos + 1..];
+
+    // Split by '|' to get alternatives
+    let alternatives: Vec<String> = group_content.split('|').map(|s| s.to_string()).collect();
+
+    Some((alternatives, rest))
 }
