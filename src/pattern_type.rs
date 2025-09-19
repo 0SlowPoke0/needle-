@@ -15,6 +15,7 @@ pub struct Token {
 pub enum PatternType {
     Digit,
     Word,
+    Any,
     Literal(char),
     CharClass(String),
     NegClass(String),
@@ -50,6 +51,8 @@ pub fn get_next_token(pattern: &str) -> Option<(Token, &str)> {
         let end = pattern.find(']')?;
         let chars: String = pattern[1..end].into();
         (PatternType::CharClass(chars), &pattern[end + 1..])
+    } else if pattern.starts_with('.') {
+        (PatternType::Any, &pattern[1..])
     } else {
         let ch = pattern.chars().next()?;
         let rest = &pattern[ch.len_utf8()..];

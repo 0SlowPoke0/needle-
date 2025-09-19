@@ -109,6 +109,7 @@ pub fn match_pattern(pattern: &str, input: &str) -> bool {
 
 fn char_matches(kind: &PatternType, ch: char) -> bool {
     match kind {
+        PatternType::Any => true,
         PatternType::Digit => ch.is_ascii_digit(),
         PatternType::Word => ch.is_alphanumeric() || ch == '_',
         PatternType::Literal(c) => *c == ch,
