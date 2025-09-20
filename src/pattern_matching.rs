@@ -1,192 +1,216 @@
 use crate::pattern_type::{get_next_token, PatternType, Quantifier};
 
-/// Try to match `pattern` at the current position of `input` ONLY.
-/// This function does NOT try to slide the pattern across the input.
-/// It returns `true` if the full `pattern` matches the start of `input`.
-pub fn match_pattern_here(pattern: &str, input: &str) -> bool {
+/// Result of trying to match a pattern at a position
+#[derive(Debug)]
+struct MatchResult<'a> {
+    success: bool,
+    remaining_input: &'a str,
+}
+
+impl<'a> MatchResult<'a> {
+    fn success(remaining: &'a str) -> Self {
+        Self {
+            success: true,
+            remaining_input: remaining,
+        }
+    }
+
+    fn failure() -> Self {
+        Self {
+            success: false,
+            remaining_input: "",
+        }
+    }
+}
+
+/// Core matching function that returns remaining input on success
+/// This eliminates the duplication between match_pattern_here and try_match_alternative
+fn match_pattern_core<'a>(pattern: &str, input: &'a str) -> MatchResult<'a> {
     // Base case: pattern consumed → success regardless of remaining input
     if pattern.is_empty() {
-        return true;
+        return MatchResult::success(input);
     }
 
     // Parse next token
-    if let Some((token, rest_pattern)) = get_next_token(pattern) {
-        // Anchors that assert positions:
-        if matches!(token.kind, PatternType::StartAnchor) {
-            // '^' consumes nothing; just continue matching the rest at this position.
-            return match_pattern_here(rest_pattern, input);
-        }
-        if matches!(token.kind, PatternType::EndAnchor) {
-            // '$' should only match if we're at the end of input
-            return input.is_empty();
-        }
-
-        // Handle groups with alternation
-        if let PatternType::Group(alternatives) = &token.kind {
-            return match_group(&alternatives, input, rest_pattern, &token.quant);
-        }
-
-        // Try to match this token at the current input position
-        match token.quant {
-            Quantifier::One => {
-                // Simple case: match exactly one character
-                if let Some(ch) = input.chars().next() {
-                    if char_matches(&token.kind, ch) {
-                        let remaining = &input[ch.len_utf8()..];
-                        return match_pattern_here(rest_pattern, remaining);
-                    }
-                }
-                return false;
-            }
-            Quantifier::OneOrMore => {
-                // Complex case: match one or more with backtracking
-                return match_one_or_more(&token.kind, input, rest_pattern);
-            }
-            Quantifier::ZeroOrOne => {
-                // Try matching with the token first
-                if let Some(ch) = input.chars().next() {
-                    if char_matches(&token.kind, ch) {
-                        let remaining = &input[ch.len_utf8()..];
-                        if match_pattern_here(rest_pattern, remaining) {
-                            return true;
-                        }
-                    }
-                }
-                // If that fails, try without consuming any character (zero matches)
-                return match_pattern_here(rest_pattern, input);
-            }
-        }
-    }
-
-    // No more tokens — success (pattern fully consumed)
-    true
-}
-
-/// Handle group matching with alternation
-fn match_group(
-    alternatives: &[String],
-    input: &str,
-    rest_pattern: &str,
-    quant: &Quantifier,
-) -> bool {
-    match quant {
-        Quantifier::One => {
-            // Try each alternative in the group
-            for alternative in alternatives {
-                if let Some(remaining) = try_match_alternative(alternative, input) {
-                    if match_pattern_here(rest_pattern, remaining) {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        Quantifier::OneOrMore => {
-            // Groups with + quantifier: match the group one or more times
-            return match_group_one_or_more(alternatives, input, rest_pattern);
-        }
-        Quantifier::ZeroOrOne => {
-            // Try matching the group once
-            for alternative in alternatives {
-                if let Some(remaining) = try_match_alternative(alternative, input) {
-                    if match_pattern_here(rest_pattern, remaining) {
-                        return true;
-                    }
-                }
-            }
-            // If no alternative matches, try without matching the group (zero matches)
-            match_pattern_here(rest_pattern, input)
-        }
-    }
-}
-
-/// Try to match a single alternative at the current position
-/// Returns Some(remaining_input) if successful, None otherwise
-fn try_match_alternative<'a>(alternative: &str, input: &'a str) -> Option<&'a str> {
-    let mut current_input = input;
-    let mut current_pattern = alternative;
-
-    while !current_pattern.is_empty() {
-        if let Some((token, rest_pattern)) = get_next_token(current_pattern) {
-            // Handle groups recursively
-            if let PatternType::Group(alternatives) = &token.kind {
-                let mut found_match = false;
-                for alt in alternatives {
-                    if let Some(remaining) = try_match_alternative(alt, current_input) {
-                        current_input = remaining;
-                        found_match = true;
-                        break;
-                    }
-                }
-                if !found_match {
-                    return None;
-                }
-                current_pattern = rest_pattern;
-                continue;
-            }
-
-            match token.quant {
-                Quantifier::One => {
-                    if let Some(ch) = current_input.chars().next() {
-                        if char_matches(&token.kind, ch) {
-                            current_input = &current_input[ch.len_utf8()..];
-                            current_pattern = rest_pattern;
-                            continue;
-                        }
-                    }
-                    return None; // Failed to match
-                }
-                Quantifier::OneOrMore => {
-                    // For simplicity in alternatives, do greedy matching
-                    if !match_one_or_more_greedy(&token.kind, &mut current_input) {
-                        return None;
-                    }
-                    current_pattern = rest_pattern;
-                }
-                Quantifier::ZeroOrOne => {
-                    // Try matching once first
-                    if let Some(ch) = current_input.chars().next() {
-                        if char_matches(&token.kind, ch) {
-                            current_input = &current_input[ch.len_utf8()..];
-                        }
-                    }
-                    // If no match, that's also fine (zero matches)
-                    current_pattern = rest_pattern;
-                }
-            }
-        } else {
-            break;
-        }
-    }
-
-    Some(current_input)
-}
-
-/// Simple greedy matching for + quantifier (without backtracking)
-fn match_one_or_more_greedy(kind: &PatternType, input: &mut &str) -> bool {
-    // Must match at least one character
-    let first = match input.chars().next() {
-        Some(ch) if char_matches(kind, ch) => ch,
-        _ => return false,
+    let Some((token, rest_pattern)) = get_next_token(pattern) else {
+        return MatchResult::success(input);
     };
 
-    *input = &input[first.len_utf8()..];
+    // Handle anchors
+    match token.kind {
+        PatternType::StartAnchor => {
+            return match_pattern_core(rest_pattern, input);
+        }
+        PatternType::EndAnchor => {
+            return if input.is_empty() {
+                MatchResult::success(input)
+            } else {
+                MatchResult::failure()
+            };
+        }
+        PatternType::Group(ref alternatives) => {
+            return match_group_core(alternatives, input, rest_pattern, &token.quant);
+        }
+        _ => {} // Handle regular tokens below
+    }
 
-    // Consume as many more as possible
-    while let Some(ch) = input.chars().next() {
+    // Handle quantifiers
+    match token.quant {
+        Quantifier::One => match_token_once(&token.kind, input, rest_pattern),
+        Quantifier::OneOrMore => match_token_one_or_more(&token.kind, input, rest_pattern),
+        Quantifier::ZeroOrOne => match_token_zero_or_one(&token.kind, input, rest_pattern),
+    }
+}
+
+/// Match a token exactly once
+fn match_token_once<'a>(kind: &PatternType, input: &'a str, rest_pattern: &str) -> MatchResult<'a> {
+    let Some(ch) = input.chars().next() else {
+        return MatchResult::failure();
+    };
+
+    if char_matches(kind, ch) {
+        let remaining = &input[ch.len_utf8()..];
+        match_pattern_core(rest_pattern, remaining)
+    } else {
+        MatchResult::failure()
+    }
+}
+
+/// Match a token zero or one times (? quantifier)
+fn match_token_zero_or_one<'a>(
+    kind: &PatternType,
+    input: &'a str,
+    rest_pattern: &str,
+) -> MatchResult<'a> {
+    // Try matching once first
+    if let Some(ch) = input.chars().next() {
         if char_matches(kind, ch) {
-            *input = &input[ch.len_utf8()..];
+            let remaining = &input[ch.len_utf8()..];
+            let result = match_pattern_core(rest_pattern, remaining);
+            if result.success {
+                return result;
+            }
+        }
+    }
+
+    // If matching once failed or wasn't possible, try zero matches
+    match_pattern_core(rest_pattern, input)
+}
+
+/// Match a token one or more times (+ quantifier)
+fn match_token_one_or_more<'a>(
+    kind: &PatternType,
+    input: &'a str,
+    rest_pattern: &str,
+) -> MatchResult<'a> {
+    let positions = collect_quantifier_positions(kind, input);
+
+    if positions.is_empty() {
+        return MatchResult::failure(); // Must match at least once
+    }
+
+    // Try positions from greediest to least greedy
+    for &pos in positions.iter().rev() {
+        let result = match_pattern_core(rest_pattern, pos);
+        if result.success {
+            return result;
+        }
+    }
+
+    MatchResult::failure()
+}
+
+/// Collect all possible positions after matching a quantified pattern
+fn collect_quantifier_positions<'a>(kind: &PatternType, input: &'a str) -> Vec<&'a str> {
+    let mut positions = Vec::new();
+    let mut current_pos = input;
+
+    // Keep consuming matching characters and save each position
+    while let Some(ch) = current_pos.chars().next() {
+        if char_matches(kind, ch) {
+            current_pos = &current_pos[ch.len_utf8()..];
+            positions.push(current_pos);
         } else {
             break;
         }
     }
 
-    true
+    positions
 }
 
-/// Handle groups with OneOrMore quantifier
-fn match_group_one_or_more(alternatives: &[String], input: &str, rest_pattern: &str) -> bool {
-    // Collect all possible positions after matching the group 1, 2, 3... times
+/// Handle group matching with different quantifiers
+fn match_group_core<'a>(
+    alternatives: &[String],
+    input: &'a str,
+    rest_pattern: &str,
+    quant: &Quantifier,
+) -> MatchResult<'a> {
+    match quant {
+        Quantifier::One => match_group_once(alternatives, input, rest_pattern),
+        Quantifier::OneOrMore => match_group_one_or_more(alternatives, input, rest_pattern),
+        Quantifier::ZeroOrOne => match_group_zero_or_one(alternatives, input, rest_pattern),
+    }
+}
+
+/// Match a group exactly once
+fn match_group_once<'a>(
+    alternatives: &[String],
+    input: &'a str,
+    rest_pattern: &str,
+) -> MatchResult<'a> {
+    for alternative in alternatives {
+        let result = match_pattern_core(alternative, input);
+        if result.success {
+            let final_result = match_pattern_core(rest_pattern, result.remaining_input);
+            if final_result.success {
+                return final_result;
+            }
+        }
+    }
+    MatchResult::failure()
+}
+
+/// Match a group zero or one times
+fn match_group_zero_or_one<'a>(
+    alternatives: &[String],
+    input: &'a str,
+    rest_pattern: &str,
+) -> MatchResult<'a> {
+    // Try matching once first
+    let once_result = match_group_once(alternatives, input, rest_pattern);
+    if once_result.success {
+        return once_result;
+    }
+
+    // If that fails, try zero matches
+    match_pattern_core(rest_pattern, input)
+}
+
+/// Match a group one or more times
+fn match_group_one_or_more<'a>(
+    alternatives: &[String],
+    input: &'a str,
+    rest_pattern: &str,
+) -> MatchResult<'a> {
+    let positions = collect_group_positions(alternatives, input);
+
+    if positions.is_empty() {
+        return MatchResult::failure(); // Must match at least once
+    }
+
+    // Try positions from greediest to least greedy
+    for &pos in positions.iter().rev() {
+        let result = match_pattern_core(rest_pattern, pos);
+        if result.success {
+            return result;
+        }
+    }
+
+    MatchResult::failure()
+}
+
+/// Collect all possible positions after matching a group multiple times
+fn collect_group_positions<'a>(alternatives: &[String], input: &'a str) -> Vec<&'a str> {
     let mut positions = Vec::new();
     let mut current_pos = input;
 
@@ -195,8 +219,9 @@ fn match_group_one_or_more(alternatives: &[String], input: &str, rest_pattern: &
         let mut found_match = false;
 
         for alternative in alternatives {
-            if let Some(remaining) = try_match_alternative(alternative, current_pos) {
-                current_pos = remaining;
+            let result = match_pattern_core(alternative, current_pos);
+            if result.success {
+                current_pos = result.remaining_input;
                 positions.push(current_pos);
                 found_match = true;
                 break;
@@ -208,71 +233,33 @@ fn match_group_one_or_more(alternatives: &[String], input: &str, rest_pattern: &
         }
     }
 
-    // Must have matched at least once
-    if positions.is_empty() {
-        return false;
-    }
-
-    // Try positions from longest match to shortest (greedy with backtracking)
-    for &pos in positions.iter().rev() {
-        if match_pattern_here(rest_pattern, pos) {
-            return true;
-        }
-    }
-
-    false
+    positions
 }
 
-/// Handle OneOrMore quantifier with proper backtracking (for non-group tokens)
-fn match_one_or_more(kind: &PatternType, input: &str, rest_pattern: &str) -> bool {
-    // Collect all possible positions after matching 1, 2, 3... characters
-    let mut positions = Vec::new();
-    let mut current_pos = input;
+// Public API functions - these wrap the core functionality
 
-    // Keep consuming matching characters and save each position
-    loop {
-        let ch = match current_pos.chars().next() {
-            Some(ch) if char_matches(kind, ch) => ch,
-            _ => break,
-        };
-        current_pos = &current_pos[ch.len_utf8()..];
-        positions.push(current_pos);
-
-        // If we've consumed all input, stop
-        if current_pos.is_empty() {
-            break;
-        }
-    }
-
-    // Try positions from longest match to shortest (greedy with backtracking)
-    for &pos in positions.iter().rev() {
-        if match_pattern_here(rest_pattern, pos) {
-            return true;
-        }
-    }
-
-    false
+/// Try to match `pattern` at the current position of `input` ONLY.
+pub fn match_pattern_here(pattern: &str, input: &str) -> bool {
+    match_pattern_core(pattern, input).success
 }
 
 /// Top-level search function: if pattern begins with `^`, match only at start,
 /// otherwise search (slide) pattern across entire input until a match is found.
 pub fn match_pattern(pattern: &str, input: &str) -> bool {
     if pattern.starts_with('^') {
-        // Remove leading '^' and require a match at the start
         return match_pattern_here(&pattern[1..], input);
     }
 
-    // Otherwise, try every possible starting position
     let mut cur = input;
     loop {
         if match_pattern_here(pattern, cur) {
             return true;
         }
-        // advance by exactly one Unicode scalar (UTF-8 safe)
+
         if let Some(ch) = cur.chars().next() {
             cur = &cur[ch.len_utf8()..];
         } else {
-            return false; // no more positions to try
+            return false;
         }
     }
 }
@@ -286,6 +273,6 @@ fn char_matches(kind: &PatternType, ch: char) -> bool {
         PatternType::CharClass(chars) => chars.contains(ch),
         PatternType::NegClass(chars) => !chars.contains(ch),
         PatternType::StartAnchor | PatternType::EndAnchor => false,
-        PatternType::Group(_) => false, // Groups don't match individual characters
+        PatternType::Group(_) => false,
     }
 }
